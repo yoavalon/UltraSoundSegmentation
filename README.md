@@ -6,3 +6,5 @@ For dataset: 'HC18' (Automated measurement of fetal head circumference using 2D 
 ![alt text](https://raw.githubusercontent.com/yoavalon/UltraSoundSegmentation/master/Selection_125.png)
 
 Example for a an early training step.
+With relu as activation function in dense layer:
+![alt text](https://raw.githubusercontent.com/yoavalon/UltraSoundSegmentation/master/Selection_126.png)
