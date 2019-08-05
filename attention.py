@@ -19,9 +19,18 @@ def cnn(input, reuse = tf.AUTO_REUSE) :
         with tf.variable_scope("conv4") as scope:
              net = tf.layers.conv2d(net,filters=32, kernel_size=[2, 2], padding="same", strides=(2, 2), activation=tf.nn.relu, reuse= tf.AUTO_REUSE)
 
+        with tf.variable_scope("conv5") as scope:
+             net = tf.layers.conv2d(net,filters=64, kernel_size=[2, 2], padding="same", strides=(2, 2), activation=tf.nn.relu, reuse= tf.AUTO_REUSE)
+        with tf.variable_scope("conv6") as scope:
+             net = tf.layers.conv2d(net,filters=64, kernel_size=[2, 2], padding="same", strides=(2, 2), activation=tf.nn.relu, reuse= tf.AUTO_REUSE)
+        with tf.variable_scope("conv7") as scope:
+             net = tf.layers.conv2d(net,filters=64, kernel_size=[2, 2], padding="same", strides=(2, 2), activation=tf.nn.relu, reuse= tf.AUTO_REUSE)             
+             net = tf.nn.dropout(net, 0.8)
+
         with tf.variable_scope("dense") as scope:              
             net = tf.contrib.layers.flatten(net)                       
-            net = tf.layers.dense(inputs=net, units=1080, activation=None, reuse = tf.AUTO_REUSE)  
+            net = tf.layers.dense(inputs=net, units=4320, activation=None, reuse = tf.AUTO_REUSE)                          
+            net = tf.nn.sigmoid(net)
             
     return net
 
@@ -35,7 +44,7 @@ def loadLabel(index) :
     img = fill_contours(img)
 
     im = Image.fromarray(img)
-    im = im.resize(size=(40,27))
+    im = im.resize(size=(80,54))
     img = (np.asarray(im)/255).flatten()
 
     return img
@@ -51,16 +60,19 @@ def CreateBatch(batchSize) :
 
 
 input = tf.placeholder(shape = (None,135,200,1), dtype = tf.float32)
-labels = tf.placeholder(shape = (None, 1080), dtype = tf.float32)
+labels = tf.placeholder(shape = (None, 4320), dtype = tf.float32)
 
 logits = cnn(input)
 pred = logits[0]
+pred2 = tf.round(logits[0]) #added
 
 with tf.variable_scope('action.LOSS', reuse=tf.AUTO_REUSE) :
     crossEntrop = tf.nn.sigmoid_cross_entropy_with_logits(logits=logits, labels = labels)
     loss = tf.reduce_sum(crossEntrop)    
     optimizer = tf.train.AdamOptimizer(0.0001, name = "action.AdamOptimizer")    
     train_op = optimizer.minimize(loss=loss)    
+    accuracy = tf.metrics.accuracy(labels, tf.round(logits))
+
 
 with tf.Session() as sess:
     
@@ -73,24 +85,110 @@ with tf.Session() as sess:
         images, labs = CreateBatch(20)       
         images = np.expand_dims(images, 3)
         
-        for step in range(10) :                 #100
+        for step in range(20) :                 #100
 
-            _, los, logs, pre  = sess.run([
+            _, los, logs, pre, acc  = sess.run([
                 train_op, 
                 loss, 
                 logits, 
-                pred
+                pred, accuracy
             ] ,feed_dict = {input: images, labels: labs})
 
-        print(f'{episode} {los:10.6f}')
+        accTrain = np.mean(np.equal(labs,np.round(logs)))
+        print(f'{episode}    {los:10.6f} {acc[0]:10.6f}  {accTrain:10.6f}')
 
         summary=tf.Summary()
         summary.value.add(tag='Loss', simple_value = los)  # reward per episode                        
-        writer.add_summary(summary, episode)
+        summary.value.add(tag='Accurarcy/Training', simple_value = acc[0])  
+        summary.value.add(tag='Accurarcy/Train2', simple_value = accTrain)  
+
+        #writer.add_summary(summary, episode)
+
+        #Validation 
+        if (episode % 50==0) and (episode>0) :
+
+            images, labs = CreateBatch(40)  #later from validation set
+            images = np.expand_dims(images, 3)
+
+            logs, pre, pre2, acc  = sess.run([
+                logits, 
+                pred, 
+                pred2, 
+                accuracy
+            ] ,feed_dict = {input: images, labels: labs})
         
+            #accVal= 1-np.mean(np.abs(np.round(1 / (1 + np.exp(-logs))) -labs ))
+            accVal = np.mean(np.equal(labs,np.round(logs)))
+
+            print(f'Validation: {episode}    {los:10.6f} {accVal:10.6f}')
+            summary.value.add(tag='Accurarcy/Validation', simple_value = accVal) 
+
+        writer.add_summary(summary, episode)
+
+        if (episode % 50==0) and (episode>0) :   #50 just for testing
+            
+            preImg = pre2.reshape((54,80))  #discretized logits !!
+            original = np.squeeze(images[0])
+            pic = Image.fromarray(preImg)
+            pic = pic.resize(size=(200,135))
+
+            plt.imshow(np.squeeze(images[0]))
+            #plt.imshow(pic,cmap='Blues', alpha=0.6)
+            plt.imshow(pic,cmap='seismic', alpha=0.5)
+
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png', dpi=200)
+            buf.seek(0)                        
+            image = tf.image.decode_png(buf.getvalue(), channels=4)
+            image = tf.expand_dims(image, 0)            
+            
+            sum1 = tf.summary.image(f'{episode}/overlay', image)
+            writer.add_summary(sum1.eval(session = sess), episode)       
+            
+            plt.close()
+
+            plt.imshow(np.squeeze(images[0]), cmap='bone')            
+            ll = np.squeeze(labs[0]).reshape((54,80))
+            pic2 = Image.fromarray(ll)
+            pic2 = pic2.resize(size=(200,135))
+            plt.imshow(pic2, alpha=0.4, cmap='seismic')
+
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png', dpi=200)
+            buf.seek(0)                        
+            image = tf.image.decode_png(buf.getvalue(), channels=4)
+            image = tf.expand_dims(image, 0)            
+            
+            sum1 = tf.summary.image(f'{episode}/original', image)
+            writer.add_summary(sum1.eval(session = sess), episode)       
+            
+            plt.close()
+
+
+            '''
+            preImgX = pre.reshape((80,54))  #discretized logits !!            
+            picX = Image.fromarray(preImgX)
+            picX = picX.resize(size=(160,108))
+            
+            plt.imshow(picX, cmap='winter_r')
+
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png', dpi=100)
+            buf.seek(0)                        
+            image = tf.image.decode_png(buf.getvalue(), channels=4)
+            image = tf.expand_dims(image, 0)            
+            
+            sum1 = tf.summary.image(f'{episode}/prediction', image)
+            writer.add_summary(sum1.eval(session = sess), episode)       
+            
+            plt.close()
+            '''
+
+
+        '''
         if (episode % 2==0) and (episode>0) :
 
-            preImg = pre.reshape((27,40))
+            preImg = pre.reshape((54,80))
             original = np.squeeze(images[0])
             pic = Image.fromarray(preImg)
             pic = pic.resize(size=(200,135))
@@ -127,7 +225,7 @@ with tf.Session() as sess:
 
 
             
-            plt.imshow(pic, cmap='GnBu')
+            plt.imshow(pic, cmap='winter_r')
 
             buf = io.BytesIO()
             plt.savefig(buf, format='png', dpi=100)
@@ -139,18 +237,4 @@ with tf.Session() as sess:
             writer.add_summary(sum1.eval(session = sess), episode)       
             
             plt.close()
-
-
-            ll = np.squeeze(labs[0]).reshape((27,40))
-            plt.imshow(ll, cmap = 'bone')
-
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png', dpi=100)
-            buf.seek(0)                        
-            image = tf.image.decode_png(buf.getvalue(), channels=4)
-            image = tf.expand_dims(image, 0)            
-            
-            sum1 = tf.summary.image(f'{episode}/groundtruth', image)
-            writer.add_summary(sum1.eval(session = sess), episode)       
-            
-            plt.close()
+        '''
